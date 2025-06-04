@@ -1,18 +1,76 @@
 # Python cache files
 __pycache__/
 *.py[cod]
+*$py.class
 
 # Virtual environments
 agentic_seek_env/
 .agentic_seek_env/
+agentic_env/
+venv/
+env/
 
-.env
+# Environment files
+.env*
 
 # Git metadata
 .git/
+.gitignore
+
+# Development files
+.vscode/
+.idea/
 
 # macOS Finder files
 .DS_Store
 
 # Log files
 *.log
+logs/
+.logs/
+
+# Cache and temporary files
+*.tmp
+*.cache
+.cache/
+
+# Screenshots and media (exclude from build)
+.screenshots/
+screenshots/
+media/
+
+# Documentation (not needed in container)
+docs/
+README*.md
+*.md
+
+# Test files
+tests/
+test_*.py
+
+# Chrome profiles and extensions
+chrome_profiles/
+chrome136/
+chrome_bundle/
+# crx/ - needed by backend
+
+# Node modules (if any)
+node_modules/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Conversations and session data
+conversations/
+*.wav
+cookies.json
+
+# Experimental and development folders
+experimental/
+dsk/
+
+# Backup files
+*.backup.*
+*.back.*

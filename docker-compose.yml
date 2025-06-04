@@ -1,14 +1,16 @@
-version: '3'
+version: '3.8'
 
 services:
   redis:
-    container_name: redis
-    profiles: ["core", "full"]
+    container_name: agenticseek-redis
     image: docker.io/valkey/valkey:8-alpine
     command: valkey-server --save 30 1 --loglevel warning
     restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
+      - ${UNRAID_APPDATA_PATH:-./data}/redis:/data
     cap_drop:
       - ALL
     cap_add:
@@ -22,19 +24,24 @@ services:
         max-file: "1"
     networks:
       - agentic-seek-net
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   searxng:
-    container_name: searxng
-    profiles: ["core", "full"]
+    container_name: agenticseek-searxng
     image: docker.io/searxng/searxng:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${SEARXNG_PORT:-8080}:8080"
     volumes:
-      - ./searxng:/etc/searxng:rw
+      - ./searxng:/etc/searxng:rw,z
+      - ${UNRAID_APPDATA_PATH:-./data}/searxng:/etc/searxng:rw
     environment:
       - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:-http://localhost:8080/}
-      - SEARXNG_SECRET_KEY=${SEARXNG_SECRET_KEY}
+      - SEARXNG_SECRET_KEY=${SEARXNG_SECRET_KEY:-$(openssl rand -hex 32)}
       - UWSGI_WORKERS=4
       - UWSGI_THREADS=4
     cap_add:
@@ -47,61 +54,101 @@ services:
         max-size: "1m"
         max-file: "1"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - agentic-seek-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   frontend:
-    container_name: frontend
-    profiles: ["core", "full"]
+    container_name: agenticseek-frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile.frontend
+    restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     volumes:
-      - ./frontend/agentic-seek-front/src:/app/src
+      - ./frontend/agentic-seek-front/src:/app/src:rw,z
+      - ${UNRAID_APPDATA_PATH:-./data}/screenshots:/app/screenshots
       - ./screenshots:/app/screenshots
     environment:
-      - NODE_ENV=development
-      - CHOKIDAR_USEPOLLING=true
-      - REACT_APP_BACKEND_URL=http://0.0.0.0:${BACKEND_PORT:-8000}
+      - NODE_ENV=${NODE_ENV:-development}
+      - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-true}
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
     networks:
       - agentic-seek-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   backend:
-    container_name: backend
-    profiles: ["backend", "full"]
+    container_name: agenticseek-backend
     build:
-      context: .
+      context: ./
       dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    shm_size: 2g
     ports:
-      - ${BACKEND_PORT:-7777}:${BACKEND_PORT:-7777}
-      - ${OLLAMA_PORT:-11434}:${OLLAMA_PORT:-11434}
-      - ${LM_STUDIO_PORT:-1234}:${LM_STUDIO_PORT:-1234}
-      - ${CUSTOM_ADDITIONAL_LLM_PORT:-8000}:${CUSTOM_ADDITIONAL_LLM_PORT:-8000}
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - ./:/app
-      - ${WORK_DIR:-.}:/opt/workspace
-    command: python3 api.py
+      - ${UNRAID_APPDATA_PATH:-./workdir}:/app/workdir
+      - ${UNRAID_APPDATA_PATH:-./logs}:/app/logs
+      - ${UNRAID_APPDATA_PATH:-./config}:/app/config
+      - ./workdir:/app/workdir
+      - ./logs:/app/logs
+      - ./config:/app/config
+      - ./screenshots:/app/.screenshots
+      - ./config.ini:/app/config.ini:ro
     environment:
-      - SEARXNG_URL=${SEARXNG_BASE_URL:-http://searxng:8080}
-      - REDIS_URL=${REDIS_BASE_URL:-redis://redis:6379/0}
-      - WORK_DIR=/opt/workspace
+      - NODE_ENV=${NODE_ENV:-development}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - TOGETHER_API_KEY=${TOGETHER_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
-      - DSK_DEEPSEEK_API_KEY=${DSK_DEEPSEEK_API_KEY}
-    network_mode: "host"
-  
+      - HEADLESS_BROWSER=${HEADLESS_BROWSER:-true}
+      - STEALTH_MODE=${STEALTH_MODE:-false}
+      - WORK_DIR=${WORK_DIR:-/app/workdir}
+      - DISPLAY=:99
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+    networks:
+      - agentic-seek-net
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
 volumes:
   redis-data:
+    driver: local
   chrome_profiles:
+    driver: local
 
 networks:
   agentic-seek-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
